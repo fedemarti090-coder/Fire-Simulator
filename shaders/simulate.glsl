@@ -1,52 +1,55 @@
 #version 430 core
 
 layout (local_size_x = 16, local_size_y = 16) in;
-layout (rgba8, binding = 0) uniform image2D imgOutput;
+layout (binding = 0) uniform sampler2D u_readTex;
+layout (rgba16f, binding = 0) uniform image2D imgOutput;
 
 uniform float u_time;
 
-void main (){
+void main () {
     ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 dims = imageSize(imgOutput);
+    ivec2 dims = textureSize(u_readTex, 0);
 
-    if (pixelCoord.x < dims.x && pixelCoord.y < dims.y){
+    if(pixelCoord.x < dims.x && pixelCoord.y < dims.y){
+
         vec2 uv = vec2(pixelCoord) / vec2(dims);
-        float x = uv.x;
-        float y = uv.y;
 
-        vec2 point = vec2(0.5, 0.05);
+        vec4 currentData = texelFetch(u_readTex, pixelCoord, 0);
+        vec2 velocity = currentData.rg;
+        float temperature = currentData.b;
+        float density = currentData.a;
 
-        float noise = sin(x * 12.0 + u_time * 5.0) * 0.03 
-                    + cos(y * 20.0 - u_time * 8.0) * 0.03;
+        velocity.x = 0.0;
 
-        vec2 distortedPoint = point + vec2(0.0, noise);
+        vec2 backUv = uv - velocity * 0.001; // PASSO TEMPORALE
+        vec4 oldData = texture(u_readTex, backUv);
 
-        float rawDist = sqrt(pow(x - distortedPoint.x, 2) * 1.5 + pow(y - distortedPoint.y, 2) * 0.5);
+        temperature = oldData.b;
+        density = oldData.a;
+        vec2 advecVel = oldData.rg;
+        advecVel.x = 0.0;
 
-        float radius = 0.25;
-        float intensity = 1.0 - (rawDist / radius);
-        intensity = clamp(intensity, 0.0, 1.0);
+        // SORGENTE
         
-        intensity = pow(intensity, 2.0);
-
-        // COLORI
-        vec3 colBlack  = vec3(0.0, 0.0, 0.0);
-        vec3 colRed    = vec3(0.9, 0.1, 0.0);
-        vec3 colYellow = vec3(1.0, 0.5, 0.05);
-        vec3 colWhite  = vec3(1.0, 0.95, 0.8); 
-
-        vec3 finalColor = colBlack;
-
-        if (intensity > 0.0) {
-            if (intensity < 0.35) {
-                finalColor = mix(colBlack, colRed, intensity / 0.35);
-            } else if (intensity < 0.75) {
-                finalColor = mix(colRed, colYellow, (intensity - 0.35) / 0.4);
-            } else {
-                finalColor = mix(colYellow, colWhite, (intensity - 0.75) / 0.25);
-            }
+        vec2 sourcePoint = vec2(0.5, 0.05);
+        float dist = distance(uv, sourcePoint);
+        if (dist < 0.04) {
+            temperature = 1.0;
+            density = 1.0;
+            advecVel.y = 0.02;
         }
 
-        imageStore(imgOutput, pixelCoord, vec4(finalColor, 1.0f));
+        // FISICA
+        temperature -= 0.001;
+        temperature = clamp(temperature, 0.0, 1.0);
+
+        density -= 0.003;
+        density = clamp(density, 0.0, 1.0);
+
+        advecVel.y += temperature * 0.005;
+        advecVel *= 0.98;
+
+        vec4 newData = vec4(advecVel, temperature, density);
+        imageStore(imgOutput, pixelCoord, newData);
     }
 }
